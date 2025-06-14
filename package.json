@@ -1,0 +1,17 @@
+{
+  "name": "geo-simulation",
+  "version": "1.0.0",
+  "description": "Browser automation for ChatGPT interactions",
+  "main": "simulation.js",
+  "scripts": {
+    "start": "node simulation.js"
+  },
+  "dependencies": {
+    "playwright": "^1.53.0",
+    "@instructor-ai/instructor": "^1.7.0",
+    "openai": "^5.3.0",
+    "zod": "^3.0.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.4.7"
+  }
+}

@@ -1,0 +1,57 @@
+name: Run Simulation
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-simulation:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Build image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          load: true
+          tags: geo-simulation:latest
+      
+      - name: Create .env file
+        run: |
+          make_env_var() {
+            key=$1
+            val="${!key}"
+            # If value contains spaces or special chars, quote it
+            if [[ "$val" =~ [[:space:]] || "$val" =~ [\"\'\\$] ]]; then
+              # Escape any existing double quotes or backslashes in the value
+              escaped_val=$(printf '%s' "$val" | sed 's/\\/\\\\/g; s/"/\\"/g')
+              echo "$key=\"$escaped_val\"" >> .env
+            else
+              echo "$key=$val" >> .env
+            fi
+          }
+
+          make_env_var QUERY
+          make_env_var CUSTOMER
+          make_env_var OPENAI_API_KEY
+          make_env_var BROWSERBASE_API_KEY
+          make_env_var SUPABASE_URL
+          make_env_var SUPABASE_KEY
+        env:
+          QUERY: ${{ secrets.QUERY }}
+          CUSTOMER: ${{ secrets.CUSTOMER }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+
+      - name: Run container with .env file
+        run: |
+          docker run --rm --env-file .env geo-simulation:latest
