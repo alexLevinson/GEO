@@ -156,18 +156,6 @@ function sleep(min, max) {
 			console.log("Attempted login with account: ", EMAIL);
 			await sleep(2000, 3500);
 
-			// Turn on temporary chat
-			const tempChatButton = await page.getByRole('button', { name: 'Turn on temporary chat' });
-			const tempChatBox = await tempChatButton.boundingBox();
-			await page.mouse.move(
-				tempChatBox.x + tempChatBox.width / 2,
-				tempChatBox.y + tempChatBox.height / 2,
-				{ steps: 8 }
-			);
-			await sleep(300, 700);
-			await tempChatButton.click();
-			console.log("Turned on temporary chat");
-
 			// Add this section to handle the onboarding modal IF it appears
 			try {
 				// Check if the modal appears with a shorter timeout
@@ -196,6 +184,18 @@ function sleep(min, max) {
 			} catch (error) {
 				console.log("No onboarding modal or error handling it, continuing anyway:", error.message);
 			}
+
+			// Turn on temporary chat
+			const tempChatButton = await page.getByRole('button', { name: 'Turn on temporary chat' });
+			const tempChatBox = await tempChatButton.boundingBox();
+			await page.mouse.move(
+				tempChatBox.x + tempChatBox.width / 2,
+				tempChatBox.y + tempChatBox.height / 2,
+				{ steps: 8 }
+			);
+			await sleep(300, 700);
+			await tempChatButton.click();
+			console.log("Turned on temporary chat");
 
 			await sleep(1200, 2500);
 
