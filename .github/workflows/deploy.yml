@@ -41,6 +41,7 @@ jobs:
           make_env_var CUSTOMER
           make_env_var OPENAI_API_KEY
           make_env_var BROWSERBASE_API_KEY
+          make_env_var BROWSERBASE_PROJECT_ID
           make_env_var SUPABASE_URL
           make_env_var SUPABASE_KEY
         env:
@@ -48,6 +49,7 @@ jobs:
           CUSTOMER: ${{ secrets.CUSTOMER }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           BROWSERBASE_API_KEY: ${{ secrets.BROWSERBASE_API_KEY }}
+          BROWSERBASE_PROJECT_ID: ${{ secrets.BROWSERBASE_PROJECT_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
