@@ -154,7 +154,35 @@ function sleep(min, max) {
 			await loginSubmitButton.click();
 
 			console.log("Attempted login with account: ", EMAIL);
-			await sleep(2000, 3500);
+
+			// Wait for navigation to complete after login
+			try {
+				await page.waitForNavigation({ timeout: 30000 });
+			} catch (error) {
+				console.log("Navigation timeout or no navigation occurred, continuing anyway");
+			}
+
+			await sleep(2000, 4000);
+
+			try {
+				await page.waitForSelector('button[data-testid="getting-started-button"]', { timeout: 10000 });
+				await page.locator('button[data-testid="getting-started-button"]').click();
+				console.log("Clicked 'Okay, let's go' button");
+			} catch (error) {
+				console.log("No 'Okay, let's go' button found");
+			}
+
+			// Turn on temporary chat
+			const tempChatButton = await page.getByRole('button', { name: 'Turn on temporary chat' });
+			const tempChatBox = await tempChatButton.boundingBox();
+			await page.mouse.move(
+				tempChatBox.x + tempChatBox.width / 2,
+				tempChatBox.y + tempChatBox.height / 2,
+				{ steps: 8 }
+			);
+			await sleep(300, 700);
+			await tempChatButton.click();
+			console.log("Turned on temporary chat");
 
 			// Add this section to handle the onboarding modal IF it appears
 			try {
@@ -184,18 +212,6 @@ function sleep(min, max) {
 			} catch (error) {
 				console.log("No onboarding modal or error handling it, continuing anyway:", error.message);
 			}
-
-			// Turn on temporary chat
-			const tempChatButton = await page.getByRole('button', { name: 'Turn on temporary chat' });
-			const tempChatBox = await tempChatButton.boundingBox();
-			await page.mouse.move(
-				tempChatBox.x + tempChatBox.width / 2,
-				tempChatBox.y + tempChatBox.height / 2,
-				{ steps: 8 }
-			);
-			await sleep(300, 700);
-			await tempChatButton.click();
-			console.log("Turned on temporary chat");
 
 			await sleep(1200, 2500);
 
@@ -315,6 +331,14 @@ function sleep(min, max) {
 
 	if (!success) {
 		console.error(`Failed after ${MAX_RETRIES} attempts. Exiting.`);
+
+		// Increment failures count for the account after MAX_RETRIES failed attempts
+		await supabase
+			.from('chatgpt_accounts')
+			.update({ failures: (randomAccount.failures || 0) + 1 })
+			.eq('email', EMAIL);
+
+		console.log(`Account ${EMAIL} failure count incremented after ${MAX_RETRIES} retries`);
 		process.exit(1);
 	}
 
