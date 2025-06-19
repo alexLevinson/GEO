@@ -2,7 +2,7 @@ name: Run Simulation
 
 on:
   schedule:
-    - cron: '0 */12 * * *'
+    - cron: '0 0 1 1 *'  # Only runs January 1st every year at midnight
   workflow_dispatch:
 
 jobs:

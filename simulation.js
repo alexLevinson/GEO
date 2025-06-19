@@ -23,13 +23,14 @@ function sleep(min, max) {
 }
 
 (async () => {
+	console.log("Starting simulation for query: ", QUERY);
 	// Initialize Supabase client
 	const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 	// Get a random account from the 1000 most recently created accounts with less than 3 failures
 	const { data: accountData, error: accountError } = await supabase
 		.from('chatgpt_accounts')
-		.select('email, password, failures')
+		.select('email, password, failures, usages')
 		.lt('failures', 3)
 		.order('created_at', { ascending: false })
 		.limit(1000);
@@ -53,6 +54,14 @@ function sleep(min, max) {
 
 	console.log(`Using account: ${EMAIL}`);
 
+	// Increment usages count for the selected account
+	await supabase
+		.from('chatgpt_accounts')
+		.update({ usages: (randomAccount.usages || 0) + 1 })
+		.eq('email', EMAIL);
+
+	console.log(`Account ${EMAIL} usage count incremented`);
+
 	let retries = 0;
 	let responseContent = "";
 	let success = false;
@@ -69,7 +78,7 @@ function sleep(min, max) {
 			// Create a new browser session with proxies and advanced stealth
 			session = await bb.sessions.create({
 				projectId: BROWSERBASE_PROJECT_ID,
-				proxies: true
+				proxies: false
 			});
 
 			// Connect to the browser session
@@ -163,6 +172,27 @@ function sleep(min, max) {
 			}
 
 			await sleep(2000, 4000);
+
+			// Check for "Check your inbox" header which indicates unusable account
+			try {
+				const inboxCheckExists = await page.locator('h1._heading_1k32w_67 span._root_xeddl_1:has-text("Check your inbox")').isVisible({ timeout: 5000 });
+
+				if (inboxCheckExists) {
+					console.log("Account requires email verification - marking as unusable");
+
+					// Mark account as unusable by adding 100 failures
+					await supabase
+						.from('chatgpt_accounts')
+						.update({ failures: (randomAccount.failures || 0) + 100 })
+						.eq('email', EMAIL);
+
+					console.log(`Account ${EMAIL} marked as unusable`);
+					await browser.close();
+					process.exit(0);
+				}
+			} catch (error) {
+				console.log("No 'Check your inbox' prompt found, continuing");
+			}
 
 			try {
 				await page.waitForSelector('button[data-testid="getting-started-button"]', { timeout: 10000 });
@@ -354,6 +384,8 @@ function sleep(min, max) {
 	const AnalysisSchema = z.object({
 		reasoning: z.string().describe("A few sentences explaining your reasoning for your answers"),
 		websitesCited: z.array(z.string()).describe("List of all websites cited as sources in the response"),
+		candidates: z.array(z.string()).describe("List of all candidate options mentioned in the response"),
+		bestCandidate: z.string().describe("The best candidate option mentioned in the response"),
 		customerMentioned: z.boolean().describe(`Whether ${CUSTOMER} was mentioned`),
 		customerBest: z.boolean().describe(`Whether ${CUSTOMER} was presented as the best option`)
 	});
@@ -363,8 +395,10 @@ function sleep(min, max) {
 			{
 				role: "system", content: `You will analyze the response below. The customer is ${CUSTOMER}.`
 					+ "\n1: Give a list of all websites cited as sources in the response. These should be fully qualified urls that come directly from the response."
-					+ `\n2: Was ${CUSTOMER} mentioned?`
-					+ `\n3: Was ${CUSTOMER} presented as the best option?`
+					+ `\n2: Give a list of all candidate options (i.e. businesses given as possible answers) mentioned in the response.`
+					+ `\n3: Who was mentioned as the best option?`
+					+ `\n4: Was ${CUSTOMER} mentioned?`
+					+ `\n5: Was ${CUSTOMER} presented as the best option?`
 			},
 			{ role: "user", content: "This is what ChatGPT said:" + responseContent }
 		],
@@ -395,6 +429,8 @@ function sleep(min, max) {
 			account_password: PASSWORD,
 			query: QUERY,
 			cited_sources: aiResp.websitesCited,
+			candidates: aiResp.candidates,
+			best_candidate: aiResp.bestCandidate,
 			customer_mentioned: aiResp.customerMentioned,
 			customer_top_ranked: aiResp.customerBest
 		})
