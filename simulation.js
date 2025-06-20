@@ -73,7 +73,7 @@ async function runSimulation(account, query, customer, supabase) {
 
 			try {
 				// Move mouse to login button first, then click
-				const loginButton = await page.locator('button[data-testid="login-button"]').first();
+				const loginButton = await page.locator('button[data-testid="login-button"]', { timeout: 10000 }).first();
 				const loginButtonBox = await loginButton.boundingBox();
 				await page.mouse.move(
 					loginButtonBox.x + loginButtonBox.width / 2,
