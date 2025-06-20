@@ -30,10 +30,10 @@ RUN echo '#!/bin/bash\n\
   )\n\
   for query in "${QUERIES[@]}"; do\n\
   echo "Processing query: $query"\n\
-  for i in {1..50}; do\n\
-  echo "Running simulation $i of 50 for query: $query"\n\
+  for i in {1..3}; do\n\
+  echo "Running simulation $i of 3 for query: $query"\n\
   QUERY="$query" node simulation.js\n\
-  echo "Completed simulation $i of 50"\n\
+  echo "Completed simulation $i of 3"\n\
   echo "------------------------"\n\
   done\n\
   done' > run_simulations.sh && \
