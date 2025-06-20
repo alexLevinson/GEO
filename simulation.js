@@ -15,6 +15,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const MAX_RETRIES = 3;
+const CONCURRENT_SESSIONS = 20;
 
 // Human-like timing function
 function sleep(min, max) {
@@ -22,45 +23,20 @@ function sleep(min, max) {
 	return new Promise(resolve => setTimeout(resolve, timeout));
 }
 
-(async () => {
-	console.log("Starting simulation for query: ", QUERY);
-	// Initialize Supabase client
-	const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// Core simulation function extracted from the original code
+async function runSimulation(account, query, customer, supabase) {
+	const EMAIL = account.email;
+	const PASSWORD = account.password;
 
-	// Get a random account from the 1000 most recently created accounts with less than 3 failures
-	const { data: accountData, error: accountError } = await supabase
-		.from('chatgpt_accounts')
-		.select('email, password, failures, usages')
-		.lt('failures', 3)
-		.order('created_at', { ascending: false })
-		.limit(1000);
-
-	if (accountError) {
-		console.error("Error fetching accounts:", accountError);
-		process.exit(1);
-	}
-
-	if (!accountData || accountData.length === 0) {
-		console.error("No accounts found in database");
-		process.exit(1);
-	}
-
-	// Select a random account from the result
-	const randomIndex = Math.floor(Math.random() * accountData.length);
-	const randomAccount = accountData[randomIndex];
-
-	const EMAIL = randomAccount.email;
-	const PASSWORD = randomAccount.password;
-
-	console.log(`Using account: ${EMAIL}`);
+	console.log(`[${EMAIL}] Starting simulation for query: ${query}`);
 
 	// Increment usages count for the selected account
 	await supabase
 		.from('chatgpt_accounts')
-		.update({ usages: (randomAccount.usages || 0) + 1 })
+		.update({ usages: (account.usages || 0) + 1 })
 		.eq('email', EMAIL);
 
-	console.log(`Account ${EMAIL} usage count incremented`);
+	console.log(`[${EMAIL}] Account usage count incremented`);
 
 	let retries = 0;
 	let responseContent = "";
@@ -70,12 +46,12 @@ function sleep(min, max) {
 
 	while (retries < MAX_RETRIES && !success) {
 		try {
-			console.info(`Attempt ${retries + 1}/${MAX_RETRIES}: Launching browser...`);
+			console.info(`[${EMAIL}] Attempt ${retries + 1}/${MAX_RETRIES}: Launching browser...`);
 
 			// Initialize Browserbase SDK
 			const bb = new Browserbase({ apiKey: BROWSERBASE_API_KEY });
 
-			// Create a new browser session with proxies and advanced stealth
+			// Create a new browser session
 			session = await bb.sessions.create({
 				projectId: BROWSERBASE_PROJECT_ID,
 				proxies: false
@@ -83,7 +59,7 @@ function sleep(min, max) {
 
 			// Connect to the browser session
 			browser = await chromium.connectOverCDP(session.connectUrl);
-			console.info('Connected to Browserbase with proxy!');
+			console.info(`[${EMAIL}] Connected to Browserbase!`);
 
 			await sleep(800, 2000);
 
@@ -91,21 +67,25 @@ function sleep(min, max) {
 			const page = context.pages()[0];
 
 			await page.goto("https://www.chatgpt.com");
-			console.log("Navigated to ChatGPT");
+			console.log(`[${EMAIL}] Navigated to ChatGPT`);
 
 			await sleep(1500, 3000);
 
-			// Move mouse to login button first, then click
-			const loginButton = await page.locator('button[data-testid="login-button"]').first();
-			const loginButtonBox = await loginButton.boundingBox();
-			await page.mouse.move(
-				loginButtonBox.x + loginButtonBox.width / 2,
-				loginButtonBox.y + loginButtonBox.height / 2,
-				{ steps: 10 }
-			);
-			await sleep(300, 800);
-			await loginButton.click();
-			console.log("Initiated Auth Flow");
+			try {
+				// Move mouse to login button first, then click
+				const loginButton = await page.locator('button[data-testid="login-button"]').first();
+				const loginButtonBox = await loginButton.boundingBox();
+				await page.mouse.move(
+					loginButtonBox.x + loginButtonBox.width / 2,
+					loginButtonBox.y + loginButtonBox.height / 2,
+					{ steps: 10 }
+				);
+				await sleep(300, 800);
+				await loginButton.click();
+				console.log(`[${EMAIL}] Initiated Auth Flow`);
+			} catch (error) {
+				console.log(`[${EMAIL}] No login button found, continuing anyway`);
+			}
 
 			//Login
 			await sleep(1000, 2000);
@@ -162,13 +142,13 @@ function sleep(min, max) {
 			await sleep(200, 400);
 			await loginSubmitButton.click();
 
-			console.log("Attempted login with account: ", EMAIL);
+			console.log(`[${EMAIL}] Attempted login`);
 
 			// Wait for navigation to complete after login
 			try {
 				await page.waitForNavigation({ timeout: 30000 });
 			} catch (error) {
-				console.log("Navigation timeout or no navigation occurred, continuing anyway");
+				console.log(`[${EMAIL}] Navigation timeout or no navigation occurred, continuing anyway`);
 			}
 
 			await sleep(2000, 4000);
@@ -178,28 +158,28 @@ function sleep(min, max) {
 				const inboxCheckExists = await page.locator('h1._heading_1k32w_67 span._root_xeddl_1:has-text("Check your inbox")').isVisible({ timeout: 5000 });
 
 				if (inboxCheckExists) {
-					console.log("Account requires email verification - marking as unusable");
+					console.log(`[${EMAIL}] Account requires email verification - marking as unusable`);
 
 					// Mark account as unusable by adding 100 failures
 					await supabase
 						.from('chatgpt_accounts')
-						.update({ failures: (randomAccount.failures || 0) + 100 })
+						.update({ failures: (account.failures || 0) + 100 })
 						.eq('email', EMAIL);
 
-					console.log(`Account ${EMAIL} marked as unusable`);
+					console.log(`[${EMAIL}] Account marked as unusable`);
 					await browser.close();
-					process.exit(0);
+					return { success: false, error: "Account requires verification" };
 				}
 			} catch (error) {
-				console.log("No 'Check your inbox' prompt found, continuing");
+				console.log(`[${EMAIL}] No 'Check your inbox' prompt found, continuing`);
 			}
 
 			try {
 				await page.waitForSelector('button[data-testid="getting-started-button"]', { timeout: 10000 });
 				await page.locator('button[data-testid="getting-started-button"]').click();
-				console.log("Clicked 'Okay, let's go' button");
+				console.log(`[${EMAIL}] Clicked 'Okay, let's go' button`);
 			} catch (error) {
-				console.log("No 'Okay, let's go' button found");
+				console.log(`[${EMAIL}] No 'Okay, let's go' button found`);
 			}
 
 			// Turn on temporary chat
@@ -212,7 +192,7 @@ function sleep(min, max) {
 			);
 			await sleep(300, 700);
 			await tempChatButton.click();
-			console.log("Turned on temporary chat");
+			console.log(`[${EMAIL}] Turned on temporary chat`);
 
 			// Add this section to handle the onboarding modal IF it appears
 			try {
@@ -223,7 +203,7 @@ function sleep(min, max) {
 				}).then(() => true).catch(() => false);
 
 				if (modalVisible) {
-					console.log("Temporary chat onboarding modal appeared");
+					console.log(`[${EMAIL}] Temporary chat onboarding modal appeared`);
 					await sleep(1000, 2000);
 					// Click the Continue button with the specific structure
 					const continueModalButton = await page.locator('div.flex-0 button.btn-primary:has-text("Continue")');
@@ -235,17 +215,17 @@ function sleep(min, max) {
 					);
 					await sleep(300, 800);
 					await continueModalButton.click();
-					console.log("Dismissed onboarding modal");
+					console.log(`[${EMAIL}] Dismissed onboarding modal`);
 				} else {
-					console.log("No onboarding modal detected, continuing");
+					console.log(`[${EMAIL}] No onboarding modal detected, continuing`);
 				}
 			} catch (error) {
-				console.log("No onboarding modal or error handling it, continuing anyway:", error.message);
+				console.log(`[${EMAIL}] No onboarding modal or error handling it, continuing anyway:`, error.message);
 			}
 
 			await sleep(1200, 2500);
 
-			console.log("Clicking tools button");
+			console.log(`[${EMAIL}] Clicking tools button`);
 			const toolsButton = await page.locator('#system-hint-button');
 			const toolsButtonBox = await toolsButton.boundingBox();
 			await page.mouse.move(
@@ -258,7 +238,7 @@ function sleep(min, max) {
 
 			await sleep(800, 1500);
 
-			console.log("Checking for web search functionality");
+			console.log(`[${EMAIL}] Checking for web search functionality`);
 			try {
 				// Try to click the "Search the web" button with a timeout
 				const webSearchOption = await page.getByText('Search the web');
@@ -270,27 +250,27 @@ function sleep(min, max) {
 				);
 				await sleep(400, 900);
 				await webSearchOption.click({ timeout: 3000 });
-				console.log("Enabling web search");
+				console.log(`[${EMAIL}] Enabling web search`);
 
 				// Wait for the Search button to appear after enabling web search
-				console.log("Waiting for Search button to appear...");
+				console.log(`[${EMAIL}] Waiting for Search button to appear...`);
 				await page.waitForSelector('button.composer-btn[data-is-selected="true"] span[data-label="true"]:has-text("Search")', {
 					timeout: 10000,
 					state: 'visible'
 				});
-				console.log("Search button appeared, web search is enabled");
+				console.log(`[${EMAIL}] Search button appeared, web search is enabled`);
 			} catch (error) {
-				console.error("Web search functionality not available for this account");
+				console.error(`[${EMAIL}] Web search functionality not available for this account`);
 
 				// Increment failures count instead of marking as unusable
 				await supabase
 					.from('chatgpt_accounts')
-					.update({ failures: (randomAccount.failures || 0) + 1 })
+					.update({ failures: (account.failures || 0) + 1 })
 					.eq('email', EMAIL);
 
-				console.log(`Account ${EMAIL} failure count incremented`);
+				console.log(`[${EMAIL}] Account failure count incremented`);
 				await browser.close();
-				process.exit(1);
+				return { success: false, error: "Web search not available" };
 			}
 
 			await sleep(1000, 2000);
@@ -307,14 +287,14 @@ function sleep(min, max) {
 			await promptArea.click();
 
 			// Type with human-like delays between characters
-			await page.keyboard.type(QUERY, { delay: 80 });
+			await page.keyboard.type(query, { delay: 80 });
 			await sleep(500, 1200);
 			await page.keyboard.press('Enter');
 
-			console.log("Typed query, waiting for response...");
+			console.log(`[${EMAIL}] Typed query, waiting for response...`);
 
 			await sleep(25000, 35000);
-			console.log("Response received, getting page content...");
+			console.log(`[${EMAIL}] Response received, getting page content...`);
 
 			// Get the entire page HTML content
 			const pageContent = await page.content();
@@ -333,43 +313,43 @@ function sleep(min, max) {
 				throw new Error("Could not extract response content");
 			}
 
-			console.log("Response extracted");
+			console.log(`[${EMAIL}] Response extracted`);
 			await sleep(800, 1500);
 			await browser.close();
 
 		} catch (error) {
-			console.error(`Attempt ${retries + 1} failed:`, error.message);
+			console.error(`[${EMAIL}] Attempt ${retries + 1} failed:`, error.message);
 
 			// Close browser if it was initialized
 			try {
 				if (browser) {
 					await browser.close();
-					console.log("Browser connection closed");
+					console.log(`[${EMAIL}] Browser connection closed`);
 				}
 			} catch (closeError) {
-				console.error("Error closing browser:", closeError.message);
+				console.error(`[${EMAIL}] Error closing browser:`, closeError.message);
 			}
 
 			retries++;
 
 			if (retries < MAX_RETRIES) {
-				console.log(`Waiting to retry... (${retries}/${MAX_RETRIES})`);
+				console.log(`[${EMAIL}] Waiting to retry... (${retries}/${MAX_RETRIES})`);
 				await sleep(5000, 8000);
 			}
 		}
 	}
 
 	if (!success) {
-		console.error(`Failed after ${MAX_RETRIES} attempts. Exiting.`);
+		console.error(`[${EMAIL}] Failed after ${MAX_RETRIES} attempts.`);
 
 		// Increment failures count for the account after MAX_RETRIES failed attempts
 		await supabase
 			.from('chatgpt_accounts')
-			.update({ failures: (randomAccount.failures || 0) + 1 })
+			.update({ failures: (account.failures || 0) + 1 })
 			.eq('email', EMAIL);
 
-		console.log(`Account ${EMAIL} failure count incremented after ${MAX_RETRIES} retries`);
-		process.exit(1);
+		console.log(`[${EMAIL}] Account failure count incremented after ${MAX_RETRIES} retries`);
+		return { success: false, error: "Max retries reached" };
 	}
 
 	const oai = new OpenAI({
@@ -386,19 +366,19 @@ function sleep(min, max) {
 		websitesCited: z.array(z.string()).describe("List of all websites cited as sources in the response"),
 		candidates: z.array(z.string()).describe("List of all candidate options mentioned in the response"),
 		bestCandidate: z.string().describe("The best candidate option mentioned in the response"),
-		customerMentioned: z.boolean().describe(`Whether ${CUSTOMER} was mentioned`),
-		customerBest: z.boolean().describe(`Whether ${CUSTOMER} was presented as the best option`)
+		customerMentioned: z.boolean().describe(`Whether ${customer} was mentioned`),
+		customerBest: z.boolean().describe(`Whether ${customer} was presented as the best option`)
 	});
 
 	const aiResp = await client.chat.completions.create({
 		messages: [
 			{
-				role: "system", content: `You will analyze the response below. The customer is ${CUSTOMER}.`
+				role: "system", content: `You will analyze the response below. The customer is ${customer}.`
 					+ "\n1: Give a list of all websites cited as sources in the response. These should be fully qualified urls that come directly from the response."
 					+ `\n2: Give a list of all candidate options (i.e. businesses given as possible answers) mentioned in the response.`
 					+ `\n3: Who was mentioned as the best option?`
-					+ `\n4: Was ${CUSTOMER} mentioned?`
-					+ `\n5: Was ${CUSTOMER} presented as the best option?`
+					+ `\n4: Was ${customer} mentioned?`
+					+ `\n5: Was ${customer} presented as the best option?`
 			},
 			{ role: "user", content: "This is what ChatGPT said:" + responseContent }
 		],
@@ -416,7 +396,7 @@ function sleep(min, max) {
 		console.log("No websites cited - incrementing failure count");
 		await supabase
 			.from('chatgpt_accounts')
-			.update({ failures: (randomAccount.failures || 0) + 1 })
+			.update({ failures: (account.failures || 0) + 1 })
 			.eq('email', EMAIL);
 	}
 
@@ -424,10 +404,10 @@ function sleep(min, max) {
 	const { data, error } = await supabase
 		.from('chatgpt_scrapes')
 		.insert({
-			customer: CUSTOMER,
+			customer: customer,
 			account_email: EMAIL,
 			account_password: PASSWORD,
-			query: QUERY,
+			query: query,
 			cited_sources: aiResp.websitesCited,
 			candidates: aiResp.candidates,
 			best_candidate: aiResp.bestCandidate,
@@ -438,9 +418,74 @@ function sleep(min, max) {
 
 	if (error) {
 		console.error("Error saving to Supabase:", error);
-		process.exit(1);
+		return { success: false, error: "Error saving to Supabase" };
 	} else {
 		console.log("Successfully saved to Supabase:", data);
+		return { success: true, data: data };
 	}
-	process.exit(0);
+}
+
+// Main function to run multiple concurrent simulations
+async function runMultipleSimulations(numSessions = CONCURRENT_SESSIONS) {
+	console.log(`Starting ${numSessions} concurrent simulations for query: ${QUERY}`);
+
+	// Initialize Supabase client
+	const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+	// Get accounts with less than 3 failures
+	const { data: accountData, error: accountError } = await supabase
+		.from('chatgpt_accounts')
+		.select('email, password, failures, usages')
+		.lt('failures', 3)
+		.order('created_at', { ascending: false })
+		.limit(numSessions * 2); // Get more accounts than needed in case some are unusable
+
+	if (accountError) {
+		console.error("Error fetching accounts:", accountError);
+		return;
+	}
+
+	if (!accountData || accountData.length === 0) {
+		console.error("No accounts found in database");
+		return;
+	}
+
+	if (accountData.length < numSessions) {
+		console.warn(`Only ${accountData.length} accounts available, running fewer sessions than requested`);
+		numSessions = accountData.length;
+	}
+
+	// Shuffle accounts and take the first numSessions
+	const shuffledAccounts = accountData
+		.sort(() => 0.5 - Math.random())
+		.slice(0, numSessions);
+
+	console.log(`Selected ${shuffledAccounts.length} accounts for concurrent simulations`);
+
+	// Create an array of simulation promises
+	const simulationPromises = shuffledAccounts.map(account =>
+		runSimulation(account, QUERY, CUSTOMER, supabase)
+	);
+
+	// Run all simulations concurrently and wait for results
+	const results = await Promise.all(simulationPromises);
+
+	// Summarize results
+	const successful = results.filter(r => r.success).length;
+	const failed = results.filter(r => !r.success).length;
+
+	console.log(`Simulation summary: ${successful} successful, ${failed} failed`);
+
+	return results;
+}
+
+// Run the main function as the entry point
+(async () => {
+	try {
+		await runMultipleSimulations();
+		process.exit(0);
+	} catch (error) {
+		console.error("Error in multiple simulations:", error);
+		process.exit(1);
+	}
 })();
