@@ -17,16 +17,16 @@ COPY . .
 # Create a shell script to run simulation.js 50 times for each query
 RUN echo '#!/bin/bash\n\
   QUERIES=(\
-  "What is the best Merdes-Benz dealership in the bay area?"\
-  "What is the best Merdes-Benz dealership in San Francisco?"\
-  "Im looking the buy a Mercedes, I live in the bay area, where is a good place to go?"\
-  "Where can I get the best deal on a Mercedes in the bay area?"\
-  "What is the highest rated Mercedes dealer in San Francisco?"\
-  "Best price Mercedes delaer SF"\
-  "Where is the most reliable Mercedes dealer in the bay area?"\
-  "What Mercedes dealership in the SF bay area has the best servicing?"\
-  "Which Mercedes dealer has the best pricing after tariffs in San Francisco?"\
-  "Which Mercedes dealership has the best financing in the bay area?"\
+  "What is the best luxury car dealership in the bay area?"\
+  "What is the best luxury car dealership in San Francisco?"\
+  "Im looking the buy a luxury car, I live in the bay area, where is a good place to go?"\
+  "Where can I get the best deal on a luxury car in the bay area?"\
+  "What is the highest rated luxury car dealer in San Francisco?"\
+  "Best price luxury car dealer SF"\
+  "Where is the most reliable luxury car dealer in the bay area?"\
+  "What luxury car dealership in the SF bay area has the best servicing?"\
+  "Which luxury car dealer has the best pricing after tariffs in San Francisco?"\
+  "Which luxury car dealership has the best financing in the bay area?"\
   )\n\
   for query in "${QUERIES[@]}"; do\n\
   echo "Processing query: $query"\n\
