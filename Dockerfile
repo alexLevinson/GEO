@@ -17,7 +17,7 @@ COPY . .
 # Create a shell script to run simulation.js 50 times for each query
 RUN echo '#!/bin/bash\n\
   QUERIES=(\
-  "What is the best Mercedes dealership in Idaho?"\
+  "What is the best Mercedes-Benz dealership in the bay area?"\
   )\n\
   for query in "${QUERIES[@]}"; do\n\
   echo "Processing query: $query"\n\
