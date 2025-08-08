@@ -6,6 +6,7 @@ const { default: OpenAI } = require("openai");
 const { z } = require("zod");
 const { createClient } = require("@supabase/supabase-js");
 const Browserbase = require('@browserbasehq/sdk').default;
+const crypto = require('crypto');
 
 const QUERY = process.env.QUERY;
 const CUSTOMER = process.env.CUSTOMER;
@@ -15,7 +16,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const MAX_RETRIES = 3;
-const CONCURRENT_SESSIONS = 20;
+const CONCURRENT_SESSIONS = 1;
 
 // Human-like timing function
 function sleep(min, max) {
@@ -23,20 +24,11 @@ function sleep(min, max) {
 	return new Promise(resolve => setTimeout(resolve, timeout));
 }
 
-// Core simulation function extracted from the original code
-async function runSimulation(account, query, customer, supabase) {
-	const EMAIL = account.email;
-	const PASSWORD = account.password;
+async function runSimulation(query, customer, supabase) {
+	let EMAIL = null;
+	let PASSWORD = null;
 
-	console.log(`[${EMAIL}] Starting simulation for query: ${query}`);
-
-	// Increment usages count for the selected account
-	await supabase
-		.from('chatgpt_accounts')
-		.update({ usages: (account.usages || 0) + 1 })
-		.eq('email', EMAIL);
-
-	console.log(`[${EMAIL}] Account usage count incremented`);
+	console.log(`[${EMAIL || 'new-account'}] Starting simulation for query: ${query}`);
 
 	let retries = 0;
 	let responseContent = "";
@@ -54,7 +46,7 @@ async function runSimulation(account, query, customer, supabase) {
 			// Create a new browser session
 			session = await bb.sessions.create({
 				projectId: BROWSERBASE_PROJECT_ID,
-				proxies: false
+				proxies: true
 			});
 
 			// Connect to the browser session
@@ -87,204 +79,272 @@ async function runSimulation(account, query, customer, supabase) {
 				console.log(`[${EMAIL}] No login button found, continuing anyway`);
 			}
 
-			//Login
-			await sleep(1000, 2000);
+			// Sign up instead of login
+			await sleep(800, 2000);
 
-			// Click on email field first
-			const emailField = await page.locator('input[name="email"]');
-			const emailBox = await emailField.boundingBox();
+			// Go to Sign up
+			const signupLink = await page.locator('a[href="/create-account"]', { timeout: 45000 });
+			const signupLinkBox = await signupLink.boundingBox();
 			await page.mouse.move(
-				emailBox.x + emailBox.width / 2,
-				emailBox.y + emailBox.height / 2,
+				signupLinkBox.x + signupLinkBox.width / 2,
+				signupLinkBox.y + signupLinkBox.height / 2,
+				{ steps: 6 }
+			);
+			await sleep(300, 700);
+			await signupLink.click();
+			console.log("Clicked Sign up link on auth page");
+
+			await sleep(800, 2000);
+
+			// Open temp email in a new tab
+			const emailPage = await context.newPage();
+			await emailPage.goto("https://10minutemail.com");
+			console.log("Opened 10minutemail.com in a new tab");
+
+			// Get email address
+			await emailPage.waitForSelector('#mail_address');
+			EMAIL = await emailPage.evaluate(() => document.getElementById('mail_address').value);
+			console.log("Got email address:", EMAIL);
+
+			// Enter email
+			await page.waitForSelector('input[name="email"]');
+			const emailInput = await page.locator('input[name="email"]');
+			const emailInputBox = await emailInput.boundingBox();
+			await page.mouse.move(
+				emailInputBox.x + emailInputBox.width / 2,
+				emailInputBox.y + emailInputBox.height / 2,
 				{ steps: 8 }
 			);
-			await sleep(200, 500);
-			await emailField.click();
-			await page.keyboard.type(EMAIL, { delay: 80 });
+			await sleep(300, 700);
+			await emailInput.click();
+			await sleep(500, 1000);
+			for (let i = 0; i < EMAIL.length; i++) {
+				await page.keyboard.type(EMAIL[i]);
+				await sleep(50, 150);
+			}
 
-			await sleep(800, 1500);
-
-			// Click continue button
-			const continueButton = await page.locator('button._root_625o4_51._primary_625o4_86');
+			// Continue after email
+			const continueButton = await page.locator('button[data-dd-action-name="Continue"]');
 			const continueButtonBox = await continueButton.boundingBox();
 			await page.mouse.move(
 				continueButtonBox.x + continueButtonBox.width / 2,
 				continueButtonBox.y + continueButtonBox.height / 2,
-				{ steps: 5 }
+				{ steps: 7 }
 			);
-			await sleep(200, 400);
+			await sleep(300, 700);
 			await continueButton.click();
 
-			await sleep(1200, 2000);
+			// Generate and enter password
+			function generatePassword(length = 12) {
+				return crypto.randomBytes(length).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, length);
+			}
+			PASSWORD = generatePassword(12);
+			console.log("Generated password:", PASSWORD);
 
-			// Click on password field, then type
-			const passwordField = await page.locator('input#\\:re\\:-password[name="password"]');
-			const passwordBox = await passwordField.boundingBox();
-			await page.mouse.move(
-				passwordBox.x + passwordBox.width / 2,
-				passwordBox.y + passwordBox.height / 2,
-				{ steps: 6 }
-			);
-			await sleep(200, 500);
-			await passwordField.click();
-			await page.keyboard.type(PASSWORD, { delay: 100 });
-
-			await sleep(800, 1500);
-
-			// Click login button
-			const loginSubmitButton = await page.locator('button._root_625o4_51._primary_625o4_86');
-			const loginSubmitButtonBox = await loginSubmitButton.boundingBox();
-			await page.mouse.move(
-				loginSubmitButtonBox.x + loginSubmitButtonBox.width / 2,
-				loginSubmitButtonBox.y + loginSubmitButtonBox.height / 2,
-				{ steps: 5 }
-			);
-			await sleep(200, 400);
-			await loginSubmitButton.click();
-
-			console.log(`[${EMAIL}] Attempted login`);
-
-			// Wait for navigation to complete after login
 			try {
-				await page.waitForNavigation({ timeout: 30000 });
+				await page.waitForSelector('input[name="new-password"]', { timeout: 30000 });
 			} catch (error) {
-				console.log(`[${EMAIL}] Navigation timeout or no navigation occurred, continuing anyway`);
+				console.log("Error waiting for password input, page content:", await page.content());
 			}
 
-			await sleep(2000, 4000);
+			const passwordInput = await page.locator('input[name="new-password"]');
+			const passwordInputBox = await passwordInput.boundingBox();
+			await page.mouse.move(
+				passwordInputBox.x + passwordInputBox.width / 2,
+				passwordInputBox.y + passwordInputBox.height / 2,
+				{ steps: 5 }
+			);
+			await sleep(300, 700);
+			await passwordInput.click();
+			await sleep(500, 1000);
+			for (let i = 0; i < PASSWORD.length; i++) {
+				await page.keyboard.type(PASSWORD[i]);
+				await sleep(40, 120);
+			}
 
-			// Check for "Check your inbox" header which indicates unusable account
+			const passwordContinueButton = await page.locator('button[data-dd-action-name="Continue"]');
+			const passwordContinueBox = await passwordContinueButton.boundingBox();
+			await page.mouse.move(
+				passwordContinueBox.x + passwordContinueBox.width / 2,
+				passwordContinueBox.y + passwordContinueBox.height / 2,
+				{ steps: 6 }
+			);
+			await sleep(300, 700);
+			await passwordContinueButton.click();
+
+			// Wait for email
+			await emailPage.waitForSelector('.mail_message', { timeout: 60000 });
+
+			// Extract verification code
+			const emailCode = await emailPage.evaluate(() => {
+				const messageText = document.querySelector('.message_bottom')?.textContent || '';
+				const codeMatch = messageText.match(/Your ChatGPT code is (\d{6})/);
+				if (codeMatch?.[1]) return codeMatch[1];
+
+				const paragraphs = document.querySelectorAll('.message_bottom p');
+				for (const p of paragraphs) {
+					const t = p.textContent?.trim() || '';
+					if (/^\d{6}$/.test(t)) return t;
+				}
+				return null;
+			});
+			console.log("Extracted verification code:", emailCode);
+
+			// Enter code
+			await page.waitForSelector('input[autocomplete="one-time-code"]');
+			const codeInput = await page.locator('input[autocomplete="one-time-code"]');
+			const codeInputBox = await codeInput.boundingBox();
+			await page.mouse.move(
+				codeInputBox.x + codeInputBox.width / 2,
+				codeInputBox.y + codeInputBox.height / 2,
+				{ steps: 7 }
+			);
+			await sleep(300, 700);
+			await codeInput.click();
+			await sleep(500, 1000);
+			for (let i = 0; i < emailCode.length; i++) {
+				await page.keyboard.type(emailCode[i]);
+				await sleep(80, 200);
+			}
+
+			// Continue after code
+			const codeContinueButton = await page.locator('button[data-dd-action-name="Continue"]');
+			const codeContinueBox = await codeContinueButton.boundingBox();
+			await page.mouse.move(
+				codeContinueBox.x + codeContinueBox.width / 2,
+				codeContinueBox.y + codeContinueBox.height / 2,
+				{ steps: 5 }
+			);
+			await sleep(300, 700);
+			await codeContinueButton.click();
+
+			// Name
+			function generateRandomName() {
+				const firstNames = ['Joseph', 'Sarah', 'Michael', 'Emma', 'David', 'Lisa', 'James', 'Jennifer', 'Robert', 'Emily', 'William', 'Olivia', 'Thomas', 'Sophia', 'Daniel'];
+				const lastNames = ['Smith', 'Johnson', 'Williams', 'Jones', 'Brown', 'Davis', 'Miller', 'Wilson', 'Moore', 'Taylor', 'Anderson', 'Thomas', 'Jackson', 'White', 'Harris'];
+				const firstName = firstNames[Math.floor(Math.random() * firstNames.length)];
+				const lastName = lastNames[Math.floor(Math.random() * lastNames.length)];
+				return `${firstName} ${lastName}`;
+			}
+			const fullName = generateRandomName();
+			await page.waitForSelector('input[data-focused="true"]');
+			const nameInput = await page.locator('input[data-focused="true"]');
+			const nameInputBox = await nameInput.boundingBox();
+			await page.mouse.move(
+				nameInputBox.x + nameInputBox.width / 2,
+				nameInputBox.y + nameInputBox.height / 2,
+				{ steps: 8 }
+			);
+			await sleep(300, 700);
+			await nameInput.click();
+			await sleep(500, 1000);
+			for (let i = 0; i < fullName.length; i++) {
+				await page.keyboard.type(fullName[i]);
+				await sleep(60, 180);
+			}
+			console.log(`Entered name ${fullName}`);
+
+			// Birthday
+			async function fillRandomBirthday() {
+				const today = new Date();
+				const minAge = 18, maxAge = 65;
+				const minYear = today.getFullYear() - maxAge;
+				const maxYear = today.getFullYear() - minAge;
+				const year = Math.floor(Math.random() * (maxYear - minYear + 1)) + minYear;
+				const month = Math.floor(Math.random() * 12) + 1;
+				let maxDays = 31;
+				if (month === 2) {
+					maxDays = (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? 29 : 28;
+				} else if ([4, 6, 9, 11].includes(month)) {
+					maxDays = 30;
+				}
+				const day = Math.floor(Math.random() * maxDays) + 1;
+
+				const dateField = await page.locator('.react-aria-DateField');
+				const dateFieldBox = await dateField.boundingBox();
+				await page.mouse.move(
+					dateFieldBox.x + dateFieldBox.width / 2,
+					dateFieldBox.y + dateFieldBox.height / 2,
+					{ steps: 7 }
+				);
+				await sleep(300, 700);
+				await dateField.click({ force: true });
+				await sleep(500, 1000);
+
+				const formattedMonth = month.toString().padStart(2, '0');
+				const formattedDay = day.toString().padStart(2, '0');
+				const dateString = `${formattedMonth}${formattedDay}${year}`;
+				for (let i = 0; i < dateString.length; i++) {
+					await page.keyboard.type(dateString[i]);
+					await sleep(70, 150);
+				}
+				console.log(`Set birthday to: ${month}/${day}/${year}`);
+				await sleep(800, 1500);
+			}
+			await fillRandomBirthday();
+
+			// Continue after birthday
+			const birthdayContinueButton = await page.locator('button[data-dd-action-name="Continue"]');
+			const birthdayContinueBox = await birthdayContinueButton.boundingBox();
+			await page.mouse.move(
+				birthdayContinueBox.x + birthdayContinueBox.width / 2,
+				birthdayContinueBox.y + birthdayContinueBox.height / 2,
+				{ steps: 8 }
+			);
+			await sleep(300, 700);
+			await birthdayContinueButton.click();
+			console.log("Clicked continue button");
+
+			await sleep(2000, 3000);
+
+
+			// Dismiss onboarding modal
 			try {
-				const inboxCheckExists = await page.locator('h1._heading_1k32w_67 span._root_xeddl_1:has-text("Check your inbox")').isVisible({ timeout: 5000 });
-
-				if (inboxCheckExists) {
-					console.log(`[${EMAIL}] Account requires email verification - marking as unusable`);
-
-					// Mark account as unusable by adding 100 failures
-					await supabase
-						.from('chatgpt_accounts')
-						.update({ failures: (account.failures || 0) + 100 })
-						.eq('email', EMAIL);
-
-					console.log(`[${EMAIL}] Account marked as unusable`);
-					await browser.close();
-					return { success: false, error: "Account requires verification" };
+				const modal = page.locator('[data-testid="modal-onboarding"]', { timeout: 10000 });
+				if (await modal.isVisible().catch(() => false)) {
+					const btn = modal.getByTestId('getting-started-button')
+						.or(modal.getByRole('button', { name: /okay, let’s go/i }));
+					await btn.click({ timeout: 5000 });
+					await expect(modal).toBeHidden();
+					console.log("Dismissed onboarding modal");
 				}
 			} catch (error) {
-				console.log(`[${EMAIL}] No 'Check your inbox' prompt found, continuing`);
+				console.log("No onboarding modal found");
 			}
 
 			try {
 				await page.waitForSelector('button[data-testid="getting-started-button"]', { timeout: 10000 });
-				await page.locator('button[data-testid="getting-started-button"]').click();
-				console.log(`[${EMAIL}] Clicked 'Okay, let's go' button`);
+				const okayLetsGoButton = await page.locator('button[data-testid="getting-started-button"]', { timeout: 10000 });
+				const okayLetsGoBox = await okayLetsGoButton.boundingBox();
+				await page.mouse.move(
+					okayLetsGoBox.x + okayLetsGoBox.width / 2,
+					okayLetsGoBox.y + okayLetsGoBox.height / 2,
+					{ steps: 7 }
+				);
+				await sleep(300, 700);
+				await okayLetsGoButton.click();
+				console.log("Clicked 'Okay, let's go' button");
 			} catch (error) {
-				console.log(`[${EMAIL}] No 'Okay, let's go' button found`);
-			}
-
-			// Turn on temporary chat
-			const tempChatButton = await page.getByRole('button', { name: 'Turn on temporary chat' });
-			const tempChatBox = await tempChatButton.boundingBox();
-			await page.mouse.move(
-				tempChatBox.x + tempChatBox.width / 2,
-				tempChatBox.y + tempChatBox.height / 2,
-				{ steps: 8 }
-			);
-			await sleep(300, 700);
-			await tempChatButton.click();
-			console.log(`[${EMAIL}] Turned on temporary chat`);
-
-			// Add this section to handle the onboarding modal IF it appears
-			try {
-				// Check if the modal appears with a shorter timeout
-				const modalVisible = await page.waitForSelector('div[data-testid="modal-temporary-chat-onboarding"]', {
-					timeout: 3000,
-					state: 'visible'
-				}).then(() => true).catch(() => false);
-
-				if (modalVisible) {
-					console.log(`[${EMAIL}] Temporary chat onboarding modal appeared`);
-					await sleep(1000, 2000);
-					// Click the Continue button with the specific structure
-					const continueModalButton = await page.locator('div.flex-0 button.btn-primary:has-text("Continue")');
-					const continueModalBox = await continueModalButton.boundingBox();
-					await page.mouse.move(
-						continueModalBox.x + continueModalBox.width / 2,
-						continueModalBox.y + continueModalBox.height / 2,
-						{ steps: 5 }
-					);
-					await sleep(300, 800);
-					await continueModalButton.click();
-					console.log(`[${EMAIL}] Dismissed onboarding modal`);
-				} else {
-					console.log(`[${EMAIL}] No onboarding modal detected, continuing`);
-				}
-			} catch (error) {
-				console.log(`[${EMAIL}] No onboarding modal or error handling it, continuing anyway:`, error.message);
+				console.log("No 'Okay, let's go' button found");
 			}
 
 			await sleep(1200, 2500);
 
-			console.log(`[${EMAIL}] Clicking tools button`);
-			const toolsButton = await page.locator('#system-hint-button');
-			const toolsButtonBox = await toolsButton.boundingBox();
-			await page.mouse.move(
-				toolsButtonBox.x + toolsButtonBox.width / 2,
-				toolsButtonBox.y + toolsButtonBox.height / 2,
-				{ steps: 6 }
-			);
-			await sleep(300, 700);
-			await toolsButton.click();
-
-			await sleep(800, 1500);
-
-			console.log(`[${EMAIL}] Checking for web search functionality`);
-			try {
-				// Try to click the "Search the web" button with a timeout
-				const webSearchOption = await page.getByText('Search the web');
-				const webSearchBox = await webSearchOption.boundingBox();
-				await page.mouse.move(
-					webSearchBox.x + webSearchBox.width / 2,
-					webSearchBox.y + webSearchBox.height / 2,
-					{ steps: 7 }
-				);
-				await sleep(400, 900);
-				await webSearchOption.click({ timeout: 3000 });
-				console.log(`[${EMAIL}] Enabling web search`);
-
-				// Wait for the Search button to appear after enabling web search
-				console.log(`[${EMAIL}] Waiting for Search button to appear...`);
-				await page.waitForSelector('button.composer-btn[data-is-selected="true"] span[data-label="true"]:has-text("Search")', {
-					timeout: 10000,
-					state: 'visible'
-				});
-				console.log(`[${EMAIL}] Search button appeared, web search is enabled`);
-			} catch (error) {
-				console.error(`[${EMAIL}] Web search functionality not available for this account`);
-
-				// Increment failures count instead of marking as unusable
-				await supabase
-					.from('chatgpt_accounts')
-					.update({ failures: (account.failures || 0) + 1 })
-					.eq('email', EMAIL);
-
-				console.log(`[${EMAIL}] Account failure count incremented`);
-				await browser.close();
-				return { success: false, error: "Web search not available" };
-			}
-
-			await sleep(1000, 2000);
-
 			// Type the query
-			const promptArea = await page.locator('div.ProseMirror[contenteditable="true"]');
-			const promptBox = await promptArea.boundingBox();
-			await page.mouse.move(
-				promptBox.x + promptBox.width / 2,
-				promptBox.y + promptBox.height / 2,
-				{ steps: 8 }
-			);
-			await sleep(300, 800);
-			await promptArea.click();
+			try {
+				const promptArea = await page.locator('div.ProseMirror[contenteditable="true"]');
+				const promptBox = await promptArea.boundingBox();
+				await page.mouse.move(
+					promptBox.x + promptBox.width / 2,
+					promptBox.y + promptBox.height / 2,
+					{ steps: 8 }
+				);
+				await sleep(300, 800);
+				await promptArea.click();
+			} catch (error) {
+				console.log("No prompt area found");
+				console.log("Page content:", await page.content());
+			}
 
 			// Type with human-like delays between characters
 			await page.keyboard.type(query, { delay: 80 });
@@ -341,14 +401,6 @@ async function runSimulation(account, query, customer, supabase) {
 
 	if (!success) {
 		console.error(`[${EMAIL}] Failed after ${MAX_RETRIES} attempts.`);
-
-		// Increment failures count for the account after MAX_RETRIES failed attempts
-		await supabase
-			.from('chatgpt_accounts')
-			.update({ failures: (account.failures || 0) + 1 })
-			.eq('email', EMAIL);
-
-		console.log(`[${EMAIL}] Account failure count incremented after ${MAX_RETRIES} retries`);
 		return { success: false, error: "Max retries reached" };
 	}
 
@@ -393,11 +445,8 @@ async function runSimulation(account, query, customer, supabase) {
 
 	// Check if no websites were cited - count as a failure
 	if (aiResp.websitesCited.length === 0) {
-		console.log("No websites cited - incrementing failure count");
-		await supabase
-			.from('chatgpt_accounts')
-			.update({ failures: (account.failures || 0) + 1 })
-			.eq('email', EMAIL);
+		console.log("No websites cited");
+		return { success: false, error: "No websites cited" };
 	}
 
 	// Save results to Supabase
@@ -432,39 +481,9 @@ async function runMultipleSimulations(numSessions = CONCURRENT_SESSIONS) {
 	// Initialize Supabase client
 	const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-	// Get accounts with less than 3 failures
-	const { data: accountData, error: accountError } = await supabase
-		.from('chatgpt_accounts')
-		.select('email, password, failures, usages')
-		.lt('failures', 3)
-		.order('created_at', { ascending: false })
-		.limit(numSessions * 2); // Get more accounts than needed in case some are unusable
-
-	if (accountError) {
-		console.error("Error fetching accounts:", accountError);
-		return;
-	}
-
-	if (!accountData || accountData.length === 0) {
-		console.error("No accounts found in database");
-		return;
-	}
-
-	if (accountData.length < numSessions) {
-		console.warn(`Only ${accountData.length} accounts available, running fewer sessions than requested`);
-		numSessions = accountData.length;
-	}
-
-	// Shuffle accounts and take the first numSessions
-	const shuffledAccounts = accountData
-		.sort(() => 0.5 - Math.random())
-		.slice(0, numSessions);
-
-	console.log(`Selected ${shuffledAccounts.length} accounts for concurrent simulations`);
-
-	// Create an array of simulation promises
-	const simulationPromises = shuffledAccounts.map(account =>
-		runSimulation(account, QUERY, CUSTOMER, supabase)
+	// Create an array of simulation promises – each will create an account then simulate
+	const simulationPromises = Array.from({ length: numSessions }, () =>
+		runSimulation(QUERY, CUSTOMER, supabase)
 	);
 
 	// Run all simulations concurrently and wait for results
